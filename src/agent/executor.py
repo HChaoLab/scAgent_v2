@@ -7,11 +7,14 @@ Handles:
 - Code template execution with AnnData objects
 - Parameter injection and default handling
 - Execution result wrapping with metrics
+- Async execution with cancellation support
 """
 
 from __future__ import annotations
 
 import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor, Future
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -19,6 +22,39 @@ if TYPE_CHECKING:
     from scAgent_v2.src.agent.registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
+
+
+class ProjectTerminationError(Exception):
+    """Raised when a project should be terminated due to unrecoverable failure."""
+    
+    def __init__(self, message: str, step_id: int | None = None, suggestion: str | None = None):
+        super().__init__(message)
+        self.step_id = step_id
+        self.suggestion = suggestion or "Please check your data quality or adjust parameters."
+
+
+class CancellationToken:
+    """Thread-safe cancellation token for aborting long-running operations."""
+    
+    def __init__(self):
+        self._cancelled = False
+        self._lock = threading.Lock()
+    
+    def cancel(self):
+        """Request cancellation."""
+        with self._lock:
+            self._cancelled = True
+    
+    @property
+    def is_cancelled(self) -> bool:
+        """Check if cancellation was requested."""
+        with self._lock:
+            return self._cancelled
+    
+    def check_and_raise(self):
+        """Check cancellation and raise if requested."""
+        if self.is_cancelled:
+            raise ProjectTerminationError("Operation cancelled by user", step_id=None)
 
 
 class SkillExecutor:
@@ -104,6 +140,60 @@ class SkillExecutor:
                 output=None,
                 metrics={},
             )
+
+    def execute_async(
+        self,
+        skill_id: str,
+        input_data: Any = None,
+        params: dict[str, Any] | None = None,
+        context: dict[str, Any] | None = None,
+        output_dir: str | Path | None = None,
+        cancellation_token: CancellationToken | None = None,
+        max_workers: int = 4,
+    ) -> tuple[Future, CancellationToken]:
+        """
+        Execute a skill asynchronously in a thread pool.
+
+        Args:
+            skill_id: The skill identifier.
+            input_data: Input AnnData object or path to h5ad file.
+            params: Agent-specified parameters (override defaults).
+            context: Context info for critic layer.
+            output_dir: Directory for saving output files.
+            cancellation_token: Token to signal cancellation.
+            max_workers: Max threads in pool (default 4).
+
+        Returns:
+            Tuple of (Future, CancellationToken) where Future can be used to
+            retrieve result later via future.result().
+        """
+        if cancellation_token is None:
+            cancellation_token = CancellationToken()
+
+        def _execute_with_cancellation():
+            if cancellation_token.is_cancelled:
+                return ExecutionResult(
+                    success=False,
+                    error="Operation cancelled before start",
+                    output=None,
+                    metrics={},
+                )
+            try:
+                return self.execute(skill_id, input_data, params, context, output_dir)
+            except ProjectTerminationError:
+                raise
+            except Exception as e:
+                logger.exception("Async execution failed for %s", skill_id)
+                return ExecutionResult(
+                    success=False,
+                    error=f"{type(e).__name__}: {e}",
+                    output=None,
+                    metrics={},
+                )
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future = executor.submit(_execute_with_cancellation)
+        return future, cancellation_token
 
     def _execute_code(
         self,

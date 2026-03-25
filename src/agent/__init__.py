@@ -1,7 +1,7 @@
 """scAgent_v2 agent module."""
 
 from scAgent_v2.src.agent.registry import SkillRegistry
-from scAgent_v2.src.agent.executor import SkillExecutor, ExecutionResult
+from scAgent_v2.src.agent.executor import SkillExecutor, ExecutionResult, CancellationToken, ProjectTerminationError
 from scAgent_v2.src.agent.critic import SkillCritic, CriticResult
 from scAgent_v2.src.agent.agent import ReActAgent, AgentConfig, StepRecord
 from scAgent_v2.src.agent.memory import AgentMemory
@@ -20,6 +20,8 @@ __all__ = [
     "SkillRegistry",
     "SkillExecutor",
     "ExecutionResult",
+    "CancellationToken",
+    "ProjectTerminationError",
     "SkillCritic",
     "CriticResult",
     "ReActAgent",

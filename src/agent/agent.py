@@ -21,6 +21,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from scAgent_v2.src.agent.executor import CancellationToken, ProjectTerminationError
+
 logger = logging.getLogger(__name__)
 
 
@@ -451,21 +453,34 @@ class ReActAgent:
     def execute_step_with_retry(
         self,
         step: dict[str, Any],
+        cancellation_token: CancellationToken | None = None,
     ) -> StepRecord:
         """
         Execute a step with retry logic on failure.
 
         Args:
             step: Step dict with skill_id, initial_params, etc.
+            cancellation_token: Token to signal cancellation.
 
         Returns:
             StepRecord with final execution result.
+
+        Raises:
+            ProjectTerminationError: If step fails unrecoverably or cancellation requested.
         """
+        if cancellation_token is None:
+            cancellation_token = CancellationToken()
+
+        cancellation_token.check_and_raise()
+
         current_step = step.copy()
         attempt = 0
         last_error = None
+        termination_raised = False
 
         while attempt < self._llm_planner.max_retries:
+            cancellation_token.check_and_raise()
+
             step_record = self.execute_step(current_step)
 
             if step_record.observation.get("success"):
@@ -490,7 +505,20 @@ class ReActAgent:
             )
 
             if adjusted is None:
-                logger.info("Cannot adjust step %d, will backtrack", step["step_id"])
+                logger.info("Cannot adjust step %d after %d attempts", step["step_id"], attempt + 1)
+
+                should_terminate = self._should_terminate_project(
+                    step, last_error, skill_spec
+                )
+
+                if should_terminate:
+                    termination_raised = True
+                    suggestion = self._get_termination_suggestion(step, last_error, skill_spec)
+                    raise ProjectTerminationError(
+                        f"Step {step['step_id']} ({step.get('skill_id', 'unknown')}) failed unrecoverably: {last_error}",
+                        step_id=step["step_id"],
+                        suggestion=suggestion,
+                    )
                 break
 
             current_step = adjusted
@@ -498,7 +526,87 @@ class ReActAgent:
 
         step_record.observation["retry_attempts"] = attempt
         step_record.observation["final_error"] = last_error
+        step_record.observation["termination_raised"] = termination_raised
         return step_record
+
+    def _should_terminate_project(
+        self,
+        step: dict[str, Any],
+        error: str,
+        skill_spec: dict[str, Any],
+    ) -> bool:
+        """
+        Determine if a step failure should terminate the entire project.
+
+        Args:
+            step: The failed step.
+            error: Error message.
+            skill_spec: Skill specification.
+
+        Returns:
+            True if project should be terminated.
+        """
+        error_lower = error.lower()
+        skill_id = step.get("skill_id", "").lower()
+
+        critical_steps = ["scanpy_qc", "scanpy_normalize"]
+        critical_errors = [
+            "data is empty",
+            "cannot read",
+            "file not found",
+            "permission denied",
+            "out of memory",
+            "data too large",
+        ]
+
+        if skill_id in critical_steps:
+            for crit_err in critical_errors:
+                if crit_err in error_lower:
+                    return True
+
+        if "qc" in skill_id:
+            if "too few cells" in error_lower or "insufficient cells" in error_lower:
+                return True
+
+        if "normalize" in skill_id:
+            if "invalid value" in error_lower or "divide by zero" in error_lower:
+                return True
+
+        return False
+
+    def _get_termination_suggestion(
+        self,
+        step: dict[str, Any],
+        error: str,
+        skill_spec: dict[str, Any],
+    ) -> str:
+        """
+        Get user-friendly suggestion when project is terminated.
+
+        Args:
+            step: The failed step.
+            error: Error message.
+            skill_spec: Skill specification.
+
+        Returns:
+            Suggestion string for the user.
+        """
+        skill_id = step.get("skill_id", "")
+        error_lower = error.lower()
+
+        suggestions = {
+            "scanpy_qc": "Your data may need pre-filtering or may be of insufficient quality. "
+                        "Try: (1) Check if cells were properly preserved, (2) Adjust QC thresholds, "
+                        "(3) Use pre-filtered data if available.",
+            "scanpy_normalize": "Normalization failed. Check if your data contains valid expression values. "
+                               "Try: (1) Ensure no negative values, (2) Check for NaN/Inf values.",
+            "default": "The analysis could not proceed due to an unrecoverable error. "
+                      "Please check your input data and parameters, then try again.",
+        }
+
+        if skill_id in suggestions:
+            return suggestions[skill_id]
+        return suggestions["default"]
 
     def run_pipeline(
         self,
@@ -572,23 +680,37 @@ class ReActAgent:
         self.plan_analysis(existing_analysis=existing)
         results["plan"] = self._plan
 
+        cancellation_token = CancellationToken()
+
         for step in self._plan:
             if step.get("status") == "skipped":
                 continue
 
-            step_result = self.execute_step_with_retry(step)
+            try:
+                step_result = self.execute_step_with_retry(step, cancellation_token)
 
-            if step_result.observation.get("success"):
-                results["steps_completed"] += 1
-            else:
-                results["steps_failed"] += 1
+                if step_result.observation.get("success"):
+                    results["steps_completed"] += 1
+                else:
+                    results["steps_failed"] += 1
 
-                if results["steps_failed"] >= self.config.max_retries:
-                    results["status"] = "stopped"
-                    results["error"] = "Too many failures, stopping"
-                    break
+                    if results["steps_failed"] >= self.config.max_retries:
+                        results["status"] = "stopped"
+                        results["error"] = "Too many failures, stopping"
+                        break
 
-        results["status"] = "completed"
+            except ProjectTerminationError as e:
+                results["status"] = "terminated"
+                results["termination_error"] = str(e)
+                results["termination_step_id"] = e.step_id
+                results["suggestion"] = e.suggestion
+                results["report"] = self.generate_report()
+                logger.error("Project terminated: %s", e)
+                return results
+
+        if results["status"] == "running":
+            results["status"] = "completed"
+
         results["report"] = self.generate_report()
 
         return results
