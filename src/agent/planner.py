@@ -192,9 +192,12 @@ On failure:
             f"- {s['id']}: {s['purpose']}" for s in manifest
         )
 
+        obs_columns = data_state.get('obs_columns', [])
+        obs_cols_str = ", ".join(obs_columns) if obs_columns else "None"
         data_info = f"""- n_cells: {data_state.get('n_cells', 'unknown')}
 - n_genes: {data_state.get('n_genes', 'unknown')}
-- existing_analysis: {data_state.get('existing_types', [])}"""
+- existing_analysis: {data_state.get('existing_types', [])}
+- obs_columns (available metadata): {obs_cols_str}"""
 
         prompt = f"""# Planning Request
 
@@ -229,6 +232,11 @@ CRITICAL PIPELINE ORDER: You MUST follow this exact order:
 7. Clustering (scanpy_leiden) - if cell types needed
 8. UMAP (scanpy_umap) - for visualization
 9. DEG Analysis (scanpy_rank_genes) - if marker genes needed
+
+CRITICAL - Parameter Selection:
+- For DEG groupby: Use existing columns from obs_columns. If user has cluster labels (e.g., "cluster", "cell_type"), use that instead of "leiden"
+- For method: Use "wilcoxon" if user mentions non-parametric or robust to outliers
+- Use columns that EXIST in the data - check obs_columns above
 
 IMPORTANT: 
 - Do NOT skip steps in the pipeline order above

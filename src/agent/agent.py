@@ -259,10 +259,12 @@ class ReActAgent:
         Returns:
             List of step dicts.
         """
+        obs_columns = list(self._adata.obs.columns) if self._adata is not None else []
         data_state = {
             "n_cells": self._adata.n_obs if self._adata is not None else 0,
             "n_genes": self._adata.n_vars if self._adata is not None else 0,
             "existing_types": existing_analysis.get("types", []) if existing_analysis else [],
+            "obs_columns": obs_columns,
         }
 
         self._plan = self._llm_planner.create_initial_plan(
