@@ -58,53 +58,46 @@ def render(session_state):
 
         plan = st.session_state.analysis_plan
         if plan:
-            st.success(f"分析计划: {len(plan)} 个步骤")
+            st.success(f"🤖 LLM 生成的分析计划: {len(plan)} 个步骤")
 
             if 'selected_steps' not in st.session_state:
                 st.session_state.selected_steps = set(range(len(plan)))
 
             for i, step in enumerate(plan):
-                col1, col2 = st.columns([1, 4])
+                with st.expander(f"**步骤 {i+1}: {step.get('name') or step.get('skill_id', 'Unknown')}**", expanded=i==0):
+                    col1, col2 = st.columns([1, 4])
 
-                with col1:
-                    if step.get("status") == "completed":
-                        st.success("✓")
-                    elif step.get("status") == "failed":
-                        st.error("✗")
-                    else:
-                        if i in st.session_state.selected_steps:
-                            checked = st.checkbox("选择", value=True, key=f"step_sel_{i}", label_visibility="collapsed")
-                            if not checked:
-                                st.session_state.selected_steps.discard(i)
+                    with col1:
+                        if step.get("status") == "completed":
+                            st.success("✓ 已完成")
+                        elif step.get("status") == "failed":
+                            st.error("✗ 失败")
                         else:
-                            checked = st.checkbox("选择", value=False, key=f"step_sel_{i}", label_visibility="collapsed")
-                            if checked:
-                                st.session_state.selected_steps.add(i)
+                            if i in st.session_state.selected_steps:
+                                checked = st.checkbox("包含", value=True, key=f"step_sel_{i}")
+                                if not checked:
+                                    st.session_state.selected_steps.discard(i)
+                            else:
+                                checked = st.checkbox("包含", value=False, key=f"step_sel_{i}")
+                                if checked:
+                                    st.session_state.selected_steps.add(i)
 
-                with col2:
-                    step_name = step.get('name') or step.get('skill_id', f'Step {i+1}')
-                    status = step.get("status")
-                    if status == "completed":
-                        st.write(f"~~{step_name}~~ ✅")
-                    elif status == "failed":
-                        st.write(f"~~{step_name}~~ ❌")
-                        st.caption(f"Skill: {step.get('skill_id', 'N/A')}")
+                    with col2:
+                        st.write(f"**Skill**: `{step.get('skill_id', 'N/A')}`")
+                        
                         if step.get('reasoning'):
-                            st.caption(f"原因: {step['reasoning'][:80]}")
-                    elif i in st.session_state.selected_steps:
-                        st.write(f"**{step_name}**")
-                        st.caption(f"Skill: {step.get('skill_id', 'N/A')}")
-                        if step.get('reasoning'):
-                            st.caption(f"推理: {step['reasoning'][:80]}")
+                            st.write(f"**🤔 LLM推理**: {step['reasoning']}")
+                        
                         if step.get('expected_outcome'):
-                            st.caption(f"预期: {step['expected_outcome'][:80]}")
-                    else:
-                        st.write(f"~~{step_name}~~ (已跳过)")
+                            st.write(f"**📊 预期结果**: {step['expected_outcome']}")
+                        
+                        if step.get('initial_params'):
+                            st.write(f"**⚙️ 参数**: `{step['initial_params']}`")
 
             st.divider()
 
             selected_count = len(st.session_state.selected_steps)
-            st.caption(f"已选择 {selected_count}/{len(plan)} 个步骤")
+            st.info(f"已选择 **{selected_count}/{len(plan)}** 个步骤执行")
 
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -232,11 +225,19 @@ def render(session_state):
         if st.session_state.get('analysis_results'):
             st.divider()
             st.subheader("📊 执行结果")
-            for r in st.session_state.analysis_results:
-                if r["status"] == "completed":
-                    st.success(f"✓ {r['step']}")
-                else:
-                    st.error(f"✗ {r['step']}: {r.get('error', 'Unknown')[:60]}")
+            for i, r in enumerate(st.session_state.analysis_results):
+                with st.expander(f"**{r['step']}**", expanded=True):
+                    if r["status"] == "completed":
+                        st.success("✅ 执行成功")
+                    else:
+                        st.error(f"❌ 执行失败: {r.get('error', 'Unknown')}")
+                    
+                    if st.session_state.analysis_plan and i < len(st.session_state.analysis_plan):
+                        step = st.session_state.analysis_plan[i]
+                        if step.get('reasoning'):
+                            st.write(f"**🤔 原计划推理**: {step['reasoning']}")
+                        if step.get('expected_outcome'):
+                            st.write(f"**📊 原计划预期**: {step['expected_outcome']}")
 
     with st.expander("📜 执行日志", expanded=True):
         if st.session_state.get('analysis_results'):
