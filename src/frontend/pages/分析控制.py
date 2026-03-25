@@ -179,6 +179,24 @@ def render(session_state):
                             f.write(report)
                         st.info(f"报告已保存: {report_path}")
 
+                        try:
+                            from scAgent_v2.src.agent.reporter import Reporter
+                            reporter = Reporter(
+                                project_name=session_state.get('project_name', 'project'),
+                                output_dir=str(output_dir)
+                            )
+                            code = reporter.generate_reproducible_code(
+                                steps=agent.steps,
+                                plan=plan,
+                                data_path=str(agent.adata if hasattr(agent.adata, 'filename') else 'data.h5ad')
+                            )
+                            code_path = output_dir / "reproducible_code.py"
+                            with open(code_path, 'w', encoding='utf-8') as f:
+                                f.write(code)
+                            st.info(f"可重复代码已保存: {code_path}")
+                        except Exception as e:
+                            st.warning(f"生成可重复代码失败: {e}")
+
                         fig_dir = output_dir / "Figures"
                         fig_dir.mkdir(parents=True, exist_ok=True)
                         try:
@@ -221,7 +239,14 @@ def render(session_state):
                     st.error(f"✗ {r['step']}: {r.get('error', 'Unknown')[:60]}")
 
     with st.expander("📜 执行日志", expanded=True):
-        if agent.steps:
+        if st.session_state.get('analysis_results'):
+            for r in st.session_state.analysis_results:
+                status = "✓" if r["status"] == "completed" else "✗"
+                if r["status"] == "completed":
+                    st.success(f"{status} {r['step']}")
+                else:
+                    st.error(f"{status} {r['step']}: {r.get('error', '')}")
+        elif agent.steps:
             st.subheader("执行历史")
             for step_record in agent.steps[-5:]:
                 status = "✓" if step_record.observation.get("success") else "✗"
