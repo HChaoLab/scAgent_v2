@@ -66,12 +66,22 @@ class AgentMemory:
         Initialize memory manager.
 
         Args:
-            output_dir: Root directory for outputs.
+            output_dir: Root directory for outputs (may include project name).
             project_name: Project subdirectory name.
             checkpoint_dir: Directory for adata checkpoints.
         """
-        self._output_dir = Path(output_dir) / project_name
-        self._checkpoint_dir = Path(checkpoint_dir) / project_name
+        output_path = Path(output_dir)
+        checkpoint_path = Path(checkpoint_dir)
+        
+        if output_path.name == project_name:
+            self._output_dir = output_path
+        else:
+            self._output_dir = output_path / project_name
+        
+        if checkpoint_path.name == project_name:
+            self._checkpoint_dir = checkpoint_path
+        else:
+            self._checkpoint_dir = checkpoint_path / project_name
 
         self._output_dir.mkdir(parents=True, exist_ok=True)
         self._checkpoint_dir.mkdir(parents=True, exist_ok=True)

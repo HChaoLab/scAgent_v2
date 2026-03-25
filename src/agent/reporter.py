@@ -39,7 +39,11 @@ class Reporter:
             output_dir: Directory for output files.
         """
         self.project_name = project_name
-        self.output_dir = Path(output_dir) / project_name
+        output_path = Path(output_dir)
+        if output_path.name == project_name:
+            self.output_dir = output_path
+        else:
+            self.output_dir = output_path / project_name
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def generate_markdown_report(
