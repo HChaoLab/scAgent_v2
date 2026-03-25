@@ -16,7 +16,31 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 logger = logging.getLogger(__name__)
+
+
+def _clean_for_hdf5(obj: Any) -> Any:
+    """
+    Recursively clean an object for HDF5 serialization.
+
+    Converts numpy types, datetime objects, and other non-standard types
+    to JSON-serializable formats that HDF5/h5py can handle.
+    """
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, dict):
+        return {k: _clean_for_hdf5(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_clean_for_hdf5(item) for item in obj]
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    return obj
 
 
 class AgentMemory:
@@ -174,6 +198,13 @@ class AgentMemory:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         checkpoint_name = name or f"checkpoint_{timestamp}"
         checkpoint_path = self._checkpoint_dir / f"{checkpoint_name}.h5ad"
+
+        if "analysis_history" in adata.uns:
+            cleaned_history = []
+            for entry in adata.uns["analysis_history"]:
+                cleaned_entry = _clean_for_hdf5(entry)
+                cleaned_history.append(cleaned_entry)
+            adata.uns["analysis_history"] = cleaned_history
 
         adata.write_h5ad(checkpoint_path)
 
