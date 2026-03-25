@@ -219,8 +219,23 @@ Generate a JSON analysis plan as an array of steps. Each step must have:
 - initial_params (object with parameters, include make_plot=True for QC/clustering/DEG)
 - expected_outcome (string with biological metrics for verification, max 50 chars)
 
-IMPORTANT: Keep reasoning and expected_outcome under 50 characters each.
-To prevent output truncation, output maximum 5 steps at a time.
+CRITICAL PIPELINE ORDER: You MUST follow this exact order:
+1. QC (scanpy_qc)
+2. Normalization (scanpy_normalize)
+3. HVG Selection (scanpy_hvg)
+4. Scaling (scanpy_scale)
+5. PCA (scanpy_pca)
+6. Neighbors (scanpy_neighbors) - if clustering needed
+7. Clustering (scanpy_leiden) - if cell types needed
+8. UMAP (scanpy_umap) - for visualization
+9. DEG Analysis (scanpy_rank_genes) - if marker genes needed
+
+IMPORTANT: 
+- Do NOT skip steps in the pipeline order above
+- Do NOT include batch correction unless user explicitly mentions batch effects
+- "IFNB stimulation" is a treatment condition, NOT a batch factor
+- Keep reasoning and expected_outcome under 50 characters each
+- Output ALL steps in the pipeline (typically 7-9 steps)
 
 Example format:
 [
